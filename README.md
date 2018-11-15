@@ -59,10 +59,12 @@ StatusCode: 502 Bad Gateway
 This function gets the notification request and create an `SQS Message` for every integration has mapped for this topic. This information is persisted in DynamoDB.
 
 ### DynamoDB Table
+
 The model of DynamoDB Table is:
-|    Id    |         Name      |  Integrations |
-|----------|:-----------------:|--------------:|
-|   UUID   | {channel}+{topic} | List of Integ |
+
+    |    Id    |         Name      |  Integrations |
+    |----------|-------------------|---------------|
+    |   UUID   | {channel}+{topic} | List of Integ |
 
 Every document in DynamoDB is a topic with UUID and Name. The `Integration` node is a List containing:
 
