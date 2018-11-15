@@ -1,0 +1,391 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Creates the stack of Notification service
+Mappings:
+ VendorName:
+  Lower:
+   Value: service
+  Normal:
+   Value: Service
+ ProjectName:
+  Lower:
+   Value: notifications
+  Normal:
+   Value: Notifications
+Metadata:
+ AWS::CloudFormation::Interface:
+  ParameterGroups:
+   - Label:
+      default: Producer Function
+     Parameters:
+      - ParamLambdaProducerS3DeployBucket
+      - ParamLambdaProducerS3DeployKey
+      - ParamLambdaProducerMemory
+      - ParamLambdaProducerTimeout
+   - Label:
+      default: Consumer Lambda
+     Parameters:
+      - ParamLambdaConsumerS3DeployBucket
+      - ParamLambdaConsumerS3DeployKey
+      - ParamLambdaConsumerMemory
+      - ParamLambdaConsumerTimeout
+   - Label:
+      default: Topic Database
+     Parameters:
+      - ParamWriteCapacityUnitsTopic
+      - ParamReadCapacityUnitsTopic
+  ParameterLabels:
+   ParamLambdaProducerS3DeployBucket:
+    default: S3 Bucket Name
+   ParamLambdaProducerS3DeployKey:
+    default: S3 Key Name
+   ParamLambdaProducerMemory:
+    default: Memory
+   ParamLambdaProducerTimeout:
+    default: Timeout
+   ParamLambdaConsumerS3DeployBucket:
+    default: S3 Bucket Name
+   ParamLambdaConsumerS3DeployKey:
+    default: S3 Key Name
+   ParamLambdaConsumerMemory:
+    default: Memory
+   ParamLambdaConsumerTimeout:
+    default: Timeout
+   ParamReadCapacityUnitsTopic:
+    default: Read Capacity
+   ParamWriteCapacityUnitsTopic:
+    default: Write Capacity
+Parameters:
+ ParamLambdaProducerS3DeployBucket:
+  ConstraintDescription: Must be a valid S3 bucket
+  Description: Bucket name to get the source code
+  Type: String
+ ParamLambdaProducerS3DeployKey: 
+  ConstraintDescription: Must be a valid S3 key
+  Description: Key to get the source code
+  Type: String
+ ParamLambdaProducerMemory:
+  ConstraintDescription: Must be a valid memory value
+  Description: Memory value to lambda function
+  Type: Number
+  Default: 128
+ ParamLambdaProducerTimeout:
+  ConstraintDescription: Must be a valid timeout value
+  Description: Lambda function timeout
+  Type: Number
+  Default: 5
+ ParamLambdaConsumerS3DeployBucket:
+  ConstraintDescription: Must be a valid S3 bucket
+  Description: Bucket name to get the source code
+  Type: String
+ ParamLambdaConsumerS3DeployKey: 
+  ConstraintDescription: Must be a valid S3 key
+  Description: Key to get the source code
+  Type: String
+ ParamLambdaConsumerMemory:
+  ConstraintDescription: Must be a valid memory value
+  Description: Memory value to lambda function
+  Type: Number
+  Default: 128
+ ParamLambdaConsumerTimeout:
+  ConstraintDescription: Must be a valid timeout value
+  Description: Lambda function timeout
+  Type: Number
+  Default: 5
+ ParamReadCapacityUnitsTopic:
+  ConstraintDescription: Must be a valid number
+  Description: Read Capacity
+  Type: Number
+  Default: 1
+ ParamWriteCapacityUnitsTopic:
+  ConstraintDescription: Must be a valid number
+  Description: Write Capacity
+  Type: Number
+  Default: 1
+Resources:
+ DynamoDBTopicTable:
+  Type: AWS::DynamoDB::Table
+  Properties:
+   AttributeDefinitions:
+    - AttributeName: "Id"
+      AttributeType: "S"
+    - AttributeName: "Name"
+      AttributeType: "S"
+   KeySchema:
+    - AttributeName: "Id"
+      KeyType: "HASH"
+    - AttributeName: "Name"
+      KeyType: RANGE
+   TableName: !Join ["-", [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], topic]]
+   ProvisionedThroughput: 
+    ReadCapacityUnits: !Ref ParamReadCapacityUnitsTopic
+    WriteCapacityUnits: !Ref ParamWriteCapacityUnitsTopic
+ QueueNotifications:
+  Type: AWS::SQS::Queue
+  Properties:
+   DelaySeconds: 0
+   VisibilityTimeout: 120
+   QueueName: !Join ["-", [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], messages]]
+ LambdaFunctionConsumerRole:
+  DependsOn: QueueNotifications
+  Type: AWS::IAM::Role
+  Properties:
+   Path: /
+   Policies:
+    - PolicyName: !Join ["", [!FindInMap [VendorName, Normal, Value], !FindInMap [ProjectName, Normal, Value], Consumer, Lambda, Policy]]
+      PolicyDocument:
+       Version: 2012-10-17
+       Statement:
+        - Effect: Allow
+          Action:
+           - "logs:CreateLogGroup"
+           - "logs:CreateLogStream"
+           - "logs:GetLogEvents"
+           - "logs:PutLogEvents"
+          Resource: ["arn:aws:logs:*:*:*"]
+        - Effect: Allow
+          Action:
+           - sqs:ReceiveMessage
+           - sqs:DeleteMessage
+           - sqs:GetQueueAttributes
+           - sqs:ChangeMessageVisibility
+          Resource: !GetAtt QueueNotifications.Arn
+   RoleName: !Join ["", [!FindInMap [VendorName, Normal, Value], !FindInMap [ProjectName, Normal, Value], Consumer, Lambda, Role]]
+   AssumeRolePolicyDocument:
+    Statement:
+     - Action: 
+        - "sts:AssumeRole"
+       Effect: Allow
+       Principal: 
+        Service: 
+         - "lambda.amazonaws.com"
+ LambdaFunctionConsumerEventSourceMapping:
+  DependsOn: [QueueNotifications, LambdaFunctionConsumer]
+  Type: AWS::Lambda::EventSourceMapping
+  Properties:
+   BatchSize: 1
+   Enabled: true
+   EventSourceArn: !GetAtt QueueNotifications.Arn
+   FunctionName: !GetAtt LambdaFunctionConsumer.Arn
+ LambdaFunctionConsumer:
+  DependsOn: LambdaFunctionConsumerRole
+  Type: AWS::Lambda::Function
+  Properties:
+   Description: Consumes the SQS Queue 
+   FunctionName: !Join ['-', [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], Consumer]]
+   Handler: handler.main
+   Role: !GetAtt [LambdaFunctionConsumerRole, Arn]
+   Runtime: python3.6
+   Timeout: !Ref ParamLambdaConsumerTimeout
+   MemorySize: !Ref ParamLambdaConsumerMemory
+   Code:
+    S3Bucket: !Ref ParamLambdaConsumerS3DeployBucket
+    S3Key: !Ref ParamLambdaConsumerS3DeployKey
+ LambdaFunctionProducerRole:
+  DependsOn: QueueNotifications
+  Type: AWS::IAM::Role
+  Properties:
+   Path: /
+   Policies:
+    - PolicyName: !Join ["", [!FindInMap [VendorName, Normal, Value], !FindInMap [ProjectName, Normal, Value], Producer, Lambda, Policy]]
+      PolicyDocument:
+       Version: 2012-10-17
+       Statement:
+        - Effect: Allow
+          Action:
+           - "logs:CreateLogGroup"
+           - "logs:CreateLogStream"
+           - "logs:GetLogEvents"
+           - "logs:PutLogEvents"
+          Resource: ["arn:aws:logs:*:*:*"]
+        - Effect: Allow
+          Action:
+           - dynamodb:GetItem
+          Resource: !Join ["", ["arn:aws:dynamodb:", !Ref "AWS::Region", ":", !Ref "AWS::AccountId", ":table/", !Ref DynamoDBTopicTable]]
+        - Effect: Allow
+          Action:
+           - sqs:SendMessage
+           - sqs:GetQueueAttributes
+           - sqs:ChangeMessageVisibility
+          Resource: !GetAtt QueueNotifications.Arn
+   RoleName: !Join ["", [!FindInMap [VendorName, Normal, Value], !FindInMap [ProjectName, Normal, Value], Producer, Lambda, Role]]
+   AssumeRolePolicyDocument:
+    Statement:
+     - Action: 
+        - "sts:AssumeRole"
+       Effect: Allow
+       Principal: 
+        Service: 
+         - "lambda.amazonaws.com"
+ LambdaFunctionProducer:
+  DependsOn: LambdaFunctionProducerRole
+  Type: AWS::Lambda::Function
+  Properties:
+   Description: Produce messages the SQS Queue 
+   FunctionName: !Join ['-', [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], Producer]]
+   Handler: handler.main
+   Role: !GetAtt [LambdaFunctionProducerRole, Arn]
+   Runtime: python3.6
+   Timeout: !Ref ParamLambdaProducerTimeout
+   MemorySize: !Ref ParamLambdaProducerMemory
+   Code:
+    S3Bucket: !Ref ParamLambdaProducerS3DeployBucket
+    S3Key: !Ref ParamLambdaProducerS3DeployKey
+ LambdaFunctionProducerAPIGatewayGrant:
+  DependsOn: [LambdaFunctionProducer, ApiNotifications]
+  Type: AWS::Lambda::Permission
+  Properties:
+   Action: "lambda:invokeFunction"
+   FunctionName: !GetAtt [LambdaFunctionProducer, Arn]
+   Principal: apigateway.amazonaws.com
+   SourceArn: !Join ["", ["arn:aws:execute-api:", !Ref "AWS::Region", ":", !Ref "AWS::AccountId", ":", !Ref ApiNotifications, "/*"]]
+ ApiNotifications:
+  Type: AWS::ApiGateway::RestApi
+  Properties:
+   Name: !Join ["-", [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value]]]
+   Description: API to expose the notification service
+ ApiNotificationsResources:
+  DependsOn: ApiNotifications
+  Type: AWS::ApiGateway::Resource
+  Properties:
+   RestApiId: !Ref ApiNotifications
+   ParentId: !GetAtt [ApiNotifications, RootResourceId]
+   PathPart: "notifications"
+ ApiNotificationsChannelResources:
+  DependsOn: ApiNotificationsResources
+  Type: AWS::ApiGateway::Resource
+  Properties:
+   RestApiId: !Ref ApiNotifications
+   ParentId: !Ref ApiNotificationsResources
+   PathPart: "{channel}"
+ ApiNotificationsTopicResources:
+  DependsOn: ApiNotificationsResources
+  Type: AWS::ApiGateway::Resource
+  Properties:
+   RestApiId: !Ref ApiNotifications
+   ParentId: !Ref ApiNotificationsChannelResources
+   PathPart: "{topic}"
+ ApiNotificationsTopicOptionsResource:
+  DependsOn: ApiNotificationsTopicResources
+  Type: AWS::ApiGateway::Method
+  Properties:
+   AuthorizationType: NONE
+   ApiKeyRequired: true
+   ResourceId: !Ref ApiNotificationsTopicResources
+   RestApiId: !Ref ApiNotifications
+   HttpMethod: "OPTIONS"
+   Integration:
+    Type: MOCK
+    IntegrationResponses:
+    - StatusCode: 200
+      ResponseParameters:
+       method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+       method.response.header.Access-Control-Allow-Methods: "'POST'"
+       method.response.header.Access-Control-Allow-Origin: "'*'"
+      ResponseTemplates:
+        application/json: ''
+    PassthroughBehavior: WHEN_NO_MATCH
+    RequestTemplates:
+      application/json: '{"statusCode": 200}'
+   MethodResponses:
+    - StatusCode: 200
+      ResponseModels:
+       application/json: 'Empty'
+      ResponseParameters:
+       method.response.header.Access-Control-Allow-Headers: false
+       method.response.header.Access-Control-Allow-Methods: false
+       method.response.header.Access-Control-Allow-Origin: false
+ ApiNotificationsTopicPostResource:
+  DependsOn: [ApiNotificationsTopicResources, LambdaFunctionProducerAPIGatewayGrant]
+  Type: AWS::ApiGateway::Method
+  Properties:
+   AuthorizationType: NONE
+   ApiKeyRequired: true
+   HttpMethod: POST
+   RequestParameters:
+    "method.request.header.x-topic-hash-x": true
+   Integration:
+    Type: AWS
+    IntegrationHttpMethod: POST
+    Uri: !Join ["", ["arn:aws:apigateway:", !Ref "AWS::Region", ":lambda:path/2015-03-31/functions/", !GetAtt [LambdaFunctionProducer, Arn], "/invocations"]]
+    IntegrationResponses:
+    - StatusCode: 200
+      ResponseTemplates:
+       application/json: "$input.json('$')"
+    - StatusCode: 502
+      SelectionPattern: ".*An error occurs while processing the request*"
+      ResponseTemplates:
+       application/json: !Join ["\n", [
+        "#set($inputRoot = $input.path('$'))",
+        "{",
+        "  \"message\" : \"$inputRoot.errorMessage\"",
+        "}"
+        ]]
+    RequestParameters:
+     "integration.request.header.x-topic-hash-x": "method.request.header.x-topic-hash-x"
+    RequestTemplates:
+     application/json: !Join ["\n", [
+       "{",
+       " \"configuration\": {",
+       "  \"dynamodb\": {",
+       "    \"table_name\": \"$stageVariables.dynamodb_tableName\"",
+       "   },",
+       "  \"sqs\": {",
+       "    \"url\": \"$stageVariables.sqs_queueUrl\"",
+       "   }",
+       " },",
+       " \"parameters\": {",
+       "    \"topic\": {",
+       "      \"name\": \"$input.params('channel')_$input.params('topic')\",",
+       "      \"hash_key\": \"$input.params('x-topic-hash-x')\"",
+       "    },",
+       "    \"message\": $input.json('$.metadata')",
+       "  }",
+       "}"
+     ]]
+   MethodResponses:
+    - StatusCode: 502
+    - StatusCode: 200
+   ResourceId: !Ref ApiNotificationsTopicResources
+   RestApiId: !Ref ApiNotifications
+ ApiNotificationsDeployment:
+  DependsOn: [
+    ApiNotificationsTopicOptionsResource, 
+    ApiNotificationsTopicPostResource
+  ]
+  Type: AWS::ApiGateway::Deployment
+  Properties:
+   RestApiId: !Ref ApiNotifications
+   StageName: v1
+   StageDescription:
+    Variables:
+     dynamodb_tableName: !Ref DynamoDBTopicTable
+     sqs_queueUrl: !Ref QueueNotifications
+ ApiNotificationsUsagePlan:
+  DependsOn: [ApiNotifications, ApiNotificationsDeployment]
+  Type: AWS::ApiGateway::UsagePlan
+  Properties:
+    ApiStages:
+    - ApiId: !Ref ApiNotifications
+      Stage: v1
+    Description: Usage plan of Notifications API
+    Quota:
+      Limit: 5000
+      Period: MONTH
+    Throttle:
+      BurstLimit: 200
+      RateLimit: 50
+    UsagePlanName: !Join ['', [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], usage, plan]]
+ ApiNotificationsUsageAPIKey: 
+  Type: AWS::ApiGateway::ApiKey
+  Properties: 
+    Name: !Join ['-', [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], api, key]]
+    Description: API Key of API Notifications
+    Enabled: true
+    GenerateDistinctId: false
+ ApiRemoteDesktopUsagePlanKey:
+  DependsOn: [ApiNotificationsUsagePlan, ApiNotificationsUsageAPIKey]
+  Type: AWS::ApiGateway::UsagePlanKey
+  Properties: 
+    KeyId: !Ref ApiNotificationsUsageAPIKey
+    KeyType: API_KEY
+    UsagePlanId: !Ref ApiNotificationsUsagePlan
