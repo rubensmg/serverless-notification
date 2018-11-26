@@ -1,3 +1,5 @@
+[![Build Status](https://semaphoreci.com/api/v1/rubensmg/serverless-notification/branches/master/badge.svg)](https://semaphoreci.com/rubensmg/serverless-notification)
+
 # Serverless Notification Service
 A stack to manage notifications for multiple integrations.
 
