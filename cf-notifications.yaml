@@ -171,7 +171,7 @@ Resources:
   Type: AWS::Lambda::Function
   Properties:
    Description: Consumes the SQS Queue 
-   FunctionName: !Join ['-', [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], Consumer]]
+   FunctionName: !Join ['-', [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], consumer]]
    Handler: handler.main
    Role: !GetAtt [LambdaFunctionConsumerRole, Arn]
    Runtime: python3.6
@@ -221,7 +221,7 @@ Resources:
   Type: AWS::Lambda::Function
   Properties:
    Description: Produce messages the SQS Queue 
-   FunctionName: !Join ['-', [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], Producer]]
+   FunctionName: !Join ['-', [!FindInMap [VendorName, Lower, Value], !FindInMap [ProjectName, Lower, Value], producer]]
    Handler: handler.main
    Role: !GetAtt [LambdaFunctionProducerRole, Arn]
    Runtime: python3.6
@@ -264,6 +264,13 @@ Resources:
    RestApiId: !Ref ApiNotifications
    ParentId: !Ref ApiNotificationsChannelResources
    PathPart: "{topic}"
+ ApiNotificationsTopicSNSResources:
+  DependsOn: ApiNotificationsTopicResources
+  Type: AWS::ApiGateway::Resource
+  Properties:
+   RestApiId: !Ref ApiNotifications
+   ParentId: !Ref ApiNotificationsTopicResources
+   PathPart: "sns"
  ApiNotificationsTopicOptionsResource:
   DependsOn: ApiNotificationsTopicResources
   Type: AWS::ApiGateway::Method
@@ -347,6 +354,89 @@ Resources:
     - StatusCode: 200
    ResourceId: !Ref ApiNotificationsTopicResources
    RestApiId: !Ref ApiNotifications
+ ApiNotificationsTopicSNSPostResource:
+  DependsOn: [ApiNotificationsTopicSNSResources, LambdaFunctionProducerAPIGatewayGrant]
+  Type: AWS::ApiGateway::Method
+  Properties:
+   AuthorizationType: NONE
+   ApiKeyRequired: true
+   HttpMethod: POST
+   RequestParameters:
+    "method.request.header.x-amz-sns-message-type": true
+    "method.request.header.x-amz-sns-message-id": true
+    "method.request.header.x-amz-sns-topic-arn": true
+    "method.request.header.x-amz-sns-subscription-arn": true
+   Integration:
+    Type: AWS
+    IntegrationHttpMethod: POST
+    Uri: !Join ["", ["arn:aws:apigateway:", !Ref "AWS::Region", ":lambda:path/2015-03-31/functions/", !GetAtt [LambdaFunctionProducer, Arn], "/invocations"]]
+    IntegrationResponses:
+    - StatusCode: 200
+      ResponseTemplates:
+       application/json: "$input.json('$')"
+    - StatusCode: 502
+      SelectionPattern: ".*An error occurs while processing the request*"
+      ResponseTemplates:
+       application/json: !Join ["\n", [
+        "#set($inputRoot = $input.path('$'))",
+        "{",
+        "  \"message\" : \"$inputRoot.errorMessage\"",
+        "}"
+        ]]
+    RequestParameters:
+     "integration.request.header.x-amz-sns-message-type": "method.request.header.x-amz-sns-message-type"
+     "integration.request.header.x-amz-sns-message-id": "method.request.header.x-amz-sns-message-id"
+     "integration.request.header.x-amz-sns-topic-arn": "method.request.header.x-amz-sns-topic-arn"
+     "integration.request.header.x-amz-sns-subscription-arn": "method.request.header.x-amz-sns-subscription-arn"
+    RequestTemplates:
+     # The SNS sends using text/plain or application/json content type
+     application/json: !Join ["\n", [
+       "{",
+       " \"configuration\": {",
+       "  \"dynamodb\": {",
+       "    \"table_name\": \"$stageVariables.dynamodb_tableName\"",
+       "   },",
+       "  \"sqs\": {",
+       "    \"url\": \"$stageVariables.sqs_queueUrl\"",
+       "   }",
+       " },",
+       " \"parameters\": {",
+       "    \"topic\": {",
+       "      \"name\": \"$input.params('channel')_$input.params('topic')\",",
+       "      \"hash_key\": \"$input.params('x-amz-sns-subscription-arn').split(':').get(6)\"",
+       "    },",
+       "    \"message\": {",
+       "        \"data\": $input.json('$.Message')",
+       "     }",
+       "  }",
+       "}"
+     ]]
+     text/plain: !Join ["\n", [
+       "{",
+       " \"configuration\": {",
+       "  \"dynamodb\": {",
+       "    \"table_name\": \"$stageVariables.dynamodb_tableName\"",
+       "   },",
+       "  \"sqs\": {",
+       "    \"url\": \"$stageVariables.sqs_queueUrl\"",
+       "   }",
+       " },",
+       " \"parameters\": {",
+       "    \"topic\": {",
+       "      \"name\": \"$input.params('channel')_$input.params('topic')\",",
+       "      \"hash_key\": \"$input.params('x-amz-sns-subscription-arn').split(':').get(6)\"",
+       "    },",
+       "    \"message\": {",
+       "        \"data\": $input.json('$.Message')",
+       "     }",
+       "  }",
+       "}"
+     ]]
+   MethodResponses:
+    - StatusCode: 502
+    - StatusCode: 200
+   ResourceId: !Ref ApiNotificationsTopicSNSResources
+   RestApiId: !Ref ApiNotifications 
  ApiNotificationsDeployment:
   DependsOn: [
     ApiNotificationsTopicOptionsResource, 
