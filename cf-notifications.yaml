@@ -406,7 +406,7 @@ Resources:
        "      \"hash_key\": \"$input.params('x-amz-sns-subscription-arn').split(':').get(6)\"",
        "    },",
        "    \"message\": {",
-       "        \"data\": $input.json('$.Message')",
+       "        \"data\": $util.parseJson($input.json('$.Message'))",
        "     }",
        "  }",
        "}"
